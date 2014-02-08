@@ -27,14 +27,39 @@ function refresh_access_token() {
 function pcs_upload_small_file {
     local SRC="$1"
     local DST="$2"
-    curl -s --show-error --globoff -i -k -L -F "file=@"$SRC"" \ 
-    "https://c.pcs.baidu.com/rest/2.0/pcs/file?method=upload&path=/apps/$APP_FOLDER/$DST&access_token=$ACCESS_TOKEN" -o $RESPONSE_FILE
-    grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE 
+    curl -s --show-error --globoff -i -k -L -F "file=@$SRC" "https://c.pcs.baidu.com/rest/2.0/pcs/file?method=upload&path=/apps/$APP_FOLDER/$DST&access_token=$ACCESS_TOKEN" -o $RESPONSE_FILE
+    grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
     if [ $? -eq 0 ];then
         einfo "$SRC上传成功！" 
     else
         eerror "上传失败！"
         eerror "具体的错误信息，请查看$RESPONSE_FILE"
+    fi
+}
+
+# 上传大于2G的文件
+#function pcs_upload_large_file {
+#       
+#}
+
+# 下载文件
+function pcs_download_file {
+    local FILE="$1"
+    local DST="$2"
+
+    # 当DST参数未提供时，默认在当前的文件夹下
+    if [[ $DST == "" ]];then
+        DST=`pwd`
+    fi
+
+    [ ! -d $DST ] && mkdir -p "$DST"
+    einfo "将下载 $FILE 到 $DST..."
+    curl -s --show-error --globoff -i -k -L "https://d.pcs.baidu.com/rest/2.0/pcs/file?method=download&access_token=$ACCESS_TOKEN&path=/apps/$APP_FOLDER/$FILE" -o $DST/$FILE -D $RESPONSE_FILE
+    grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
+    if [ $? -eq 0 ];then
+        einfo "下载成功！"
+    else
+        eerror "下载失败，请查看$RESPONSE_FILE..."
     fi
 }
 
@@ -90,13 +115,11 @@ else
     done
 fi
 
+
 # 开始
 COMMAND=${@:$OPTIND:1}
-echo "command is $COMMAND"
 ARG1=${@:$OPTIND+1:1}
-echo "arg1 is $ARG1"
 ARG2=${@:$OPTIND+2:1}
-echo "arg2 is $ARG2"
 
 case $COMMAND in
     upload)
@@ -104,4 +127,12 @@ case $COMMAND in
         FILE_DST=$ARG2
         pcs_upload_small_file "$FILE_SRC" "$FILE_DST"
     ;;
+    download)
+        FILE_SRC=$ARG1
+        FILE_DST=$ARG2
+        if [[ $FILE_SRC == "" ]];then
+            eerror "请输入要下载的文件。"
+            exit 1
+        fi
+    pcs_download_file "$FILE_SRC" "$FILE_DST"
 esac
