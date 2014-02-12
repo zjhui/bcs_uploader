@@ -11,6 +11,11 @@ CONFIG_FILE=~/.pcs_uploader
 API_CODE_URL="https://openapi.baidu.com/oauth/2.0/device/code"
 API_TOKEN_URL="https://openapi.baidu.com/oauth/2.0/token"
 
+# 去除文件名前后的空格
+function trim {
+    sed -e 's/^[[:space:]]*//g' -e 's/[[:space:]]*\$//g'
+}
+
 # ACCESS_TOKEN过期后重新刷新
 function refresh_access_token() {
     curl -k -L -d "grant_type=refresh_token&refresh_token=$REFRESH_TOKEN&client_id=$APIKEY&client_secret=$SECRETKEY" \
@@ -60,6 +65,21 @@ function pcs_download_file {
         einfo "下载成功！"
     else
         eerror "下载失败，请查看$RESPONSE_FILE..."
+    fi
+}
+
+# 创建目录
+function pcs_mkdir {
+    local DST_DIR="$1"
+    #修正目录的格式，去除前后的空格
+    DST_DIR=`echo "$DST_DIR" | trim`
+    einfo "即将创建文件夹/apps/$APP_FOLDER/$DST_DIR..."
+    curl -s --show-error --globoff -i -k -L "https://pcs.baidu.com/rest/2.0/pcs/file?method=mkdir&access_token=$ACCESS_TOKEN&path=/apps/$APP_FOLDER/$DST_DIR" -o $RESPONSE_FILE
+    grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
+    if [ $? -eq 0 ];then
+        einfo "$DST_DIR创建成功！"
+    else
+        eerror "创建文件夹失败，请查看$RESPONSE_FILE"
     fi
 }
 
@@ -134,5 +154,10 @@ case $COMMAND in
             eerror "请输入要下载的文件。"
             exit 1
         fi
-    pcs_download_file "$FILE_SRC" "$FILE_DST"
+        pcs_download_file "$FILE_SRC" "$FILE_DST"
+    ;;
+    mkdir)
+        DIR_DST=$ARG1
+        pcs_mkdir $DIR_DST
+    ;;
 esac
