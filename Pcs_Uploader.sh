@@ -17,15 +17,24 @@ function trim {
 }
 
 # 判断是目录还是文件
+# 返回值：DIR/FILE/Err
 function pcs_stat {
     local FILE="$1"
+    local DIR="$( cd "$( dirname "$0" )" && pwd )"
     curl -s --show-error --globoff -i -k -L "https://pcs.baidu.com/rest/2.0/pcs/file?method=meta&access_token=$ACCESS_TOKEN&path=/apps/$APP_FOLDER/$FILE" -o $RESPONSE_FILE
-    if grep -q "HTTP/1.1 404 Not Found" $RESPONSE_FILE;then
-        eerror "文件不存在，请检查输入的文件名是否正确或该文件是否已经被删除！"
-    fi
+
     grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
     if [ $? -eq 0 ];then
-        local IS_DIR=
+        # 判断是否是文件夹,1为文件夹，0为文件
+        local IS_DIR=$(tail -1 $RESPONSE_FILE | bash "$DIR"/JSON.sh/JSON.sh -l | awk '/isdir/{print $2}')
+        
+        if [[ $IS_DIR = "1" ]];then
+            echo "DIR"
+        else
+            echo "FILE"
+        fi
+    else
+        echo "Err"
     fi
 }
 
@@ -45,6 +54,7 @@ function refresh_access_token() {
 function pcs_upload_small_file {
     local SRC="$1"
     local DST="$2"
+
     curl -s --show-error --globoff -i -k -L -F "file=@$SRC" "https://c.pcs.baidu.com/rest/2.0/pcs/file?method=upload&path=/apps/$APP_FOLDER/$DST&access_token=$ACCESS_TOKEN" -o $RESPONSE_FILE
     grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
     if [ $? -eq 0 ];then
@@ -55,6 +65,33 @@ function pcs_upload_small_file {
     fi
 }
 
+function pcs_upload {
+    local SRC="$1"
+    local DST="$2"
+
+    # 判断文件是否存在
+    if [[ ! -f $SRC && ! -d $SRC ]]; then
+        echo "> No such file or directory: $SRC\n"
+        exit 1
+    fi
+
+    # 判断是否有读的权限
+    if [[ ! -r $SRC ]]; then
+        echo "> Error reading file $SRC: Permission denied\n"
+        exit 1
+    fi
+
+    # 判断DST是否是文件夹，是文件夹的话则DST为$DST/$SRC
+    TYPE=$(pcs_stat "$DST")
+    if [[ $TYPE == "DST" ]]; then
+        local filename=$(basename "$SRC")
+        DST="$DST"/"$filename"
+    fi
+
+    if [[ -f $SRC ]]; then
+        pcs_upload_small_file "$SRC" "$DST"
+    fi
+}
 # 上传大于2G的文件
 #function pcs_upload_large_file {
 #       
@@ -67,7 +104,7 @@ function pcs_download_file {
 
     # 当DST参数未提供时，默认在当前的文件夹下
     if [[ $DST == "" ]];then
-        DST=`pwd`
+        DST=$(pwd)
     fi
 
     [ ! -d $DST ] && mkdir -p "$DST"
@@ -84,8 +121,9 @@ function pcs_download_file {
 # 创建目录
 function pcs_mkdir {
     local DST_DIR="$1"
+
     #修正目录的格式，去除前后的空格
-    DST_DIR=`echo "$DST_DIR" | trim`
+    DST_DIR=$(echo "$DST_DIR" | trim)
     einfo "即将创建文件夹/apps/$APP_FOLDER/$DST_DIR..."
     curl -s --show-error --globoff -i -k -L "https://pcs.baidu.com/rest/2.0/pcs/file?method=mkdir&access_token=$ACCESS_TOKEN&path=/apps/$APP_FOLDER/$DST_DIR" -o $RESPONSE_FILE
     grep -q "^HTTP/1.1 200 OK" $RESPONSE_FILE > /dev/null 2>&1
@@ -143,10 +181,8 @@ else
     # 通过APIKEY获得device_code和user_code
     einfo "获取code中..."
     curl -s -k -L -d "client_id=$APIKEY&response_type=device_code&scope=basic,netdisk" $API_CODE_URL -o $RESPONSE_FILE 
-#    DEVICE_CODE=`awk -F\" '{print $4}' $RESPONSE_FILE`
-#    USER_CODE=`awk -F\" '{print $8}' $RESPONSE_FILE`
-    DEVICE_CODE=${tail -1 $RESPONSE_FILE | bash /$DIR/JSON.sh/JSON.sh -l | awk '/device_code/{print $2}' | tr -d \"}
-    USER_CODE=${tail -1 $RESPONSE_FILE | bash /$DIR/JSON.sh/JSON.sh -l | awk '/user_code/{print $2}' | tr -d \"}
+    DEVICE_CODE=$(tail -1 "$RESPONSE_FILE" | bash "$DIR"/JSON.sh/JSON.sh -l | awk '/device_code/{print $2}' | tr -d \")
+    USER_CODE=$(tail -1 $RESPONSE_FILE | bash "$DIR"/JSON.sh/JSON.sh -l | awk '/user_code/{print $2}' | tr -d \")
     while (true);do
         einfo "请打开链接 http://openapi.baidu.com/device?code=$USER_CODE&display=page&force_login= 点击授权。"
         einfo "完成后请按回车"
@@ -154,13 +190,8 @@ else
     
         einfo "获取access_token和refresh_token..."
         curl -s -k -L -d "grant_type=device_token&code=$DEVICE_CODE&client_id=$APIKEY&client_secret=$SECRETKEY" $API_TOKEN_URL -o $RESPONSE_FILE
-#       cat $RESPONSE_FILE
-#       REFRESH_TOKEN=`awk -F\" '{print $6}' $RESPONSE_FILE`
-        REFRESH_TOKEN=${tail -1 $RESPONSE_FILE | bash /$DIR/JSON.sh/JSON.sh -l | awk '/refresh_token/{print $2}' | tr -d \"}
-        echo $REFRESH_TOKEN
-#        ACCESS_TOKEN=`awk -F\" '{print $10}' $RESPONSE_FILE`
-        ACCESS_TOKEN=${tail -1 $RESPONSE_FILE | bash /$DIR/JSON.sh/JSON.sh -l | awk '/access_token/{print $2}' | tr -d \"}
-        echo $ACCESS_TOKEN
+        REFRESH_TOKEN=$(tail -1 $RESPONSE_FILE | bash "$DIR"/JSON.sh/JSON.sh -l | awk '/refresh_token/{print $2}' | tr -d \")
+        ACCESS_TOKEN=$(tail -1 $RESPONSE_FILE | bash "$DIR"/JSON.sh/JSON.sh -l | awk '/access_token/{print $2}' | tr -d \")
         if [[ $REFRESH_TOKEN != "" && $ACCESS_TOKEN != "" ]];then
             einfo "ok\n"
             echo "APIKEY=$APIKEY" >> "$CONFIG_FILE"
@@ -172,6 +203,7 @@ else
             break
         else
             eerror "Failed!\n"
+            exit 1
         fi
     done
 fi
@@ -186,7 +218,7 @@ case $COMMAND in
     upload)
         FILE_SRC=$ARG1
         FILE_DST=$ARG2
-        pcs_upload_small_file "$FILE_SRC" "$FILE_DST"
+        pcs_upload "$FILE_SRC" "$FILE_DST"
     ;;
     download)
         FILE_SRC=$ARG1
